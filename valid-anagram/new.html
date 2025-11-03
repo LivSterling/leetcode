@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Voice Vocab Harness</title>
+<style>
+  body { font:14px system-ui, sans-serif; margin:20px; }
+  .row { display:flex; gap:16px; align-items:center; margin:8px 0; }
+  .pill { padding:4px 10px; border-radius:999px; background:#eee; }
+  .ok { background:#d8ffd8 } .bad { background:#ffe2e2 }
+  textarea { width:100%; height:70px }
+  table { border-collapse:collapse; margin-top:10px; }
+  td,th { border:1px solid #ddd; padding:6px 8px; }
+</style>
+</head>
+<body>
+<h2>Voice Vocabulary Test</h2>
+
+<div class="row">
+  <button id="startBtn">Start Listening</button>
+  <button id="stopBtn">Stop</button>
+  <span id="status" class="pill">Idle</span>
+</div>
+
+<div class="row"><strong>Last transcript:</strong> <span id="transcript">—</span></div>
+<div class="row"><strong>Matched intent:</strong> <span id="intent" class="pill">—</span></div>
+
+<h3>Live Log</h3>
+<textarea id="log" placeholder="Transcripts + matches will appear here…" readonly></textarea>
+
+<h3>Counters</h3>
+<table>
+  <thead><tr><th>Intent</th><th>Hit</th><th>Miss</th><th>Synonyms</th></tr></thead>
+  <tbody id="counts"></tbody>
+</table>
+
+<script>
+const intents = [
+  { name:'record',    kws:['record','start recording','start'] },
+  { name:'stop',      kws:['stop','finish','end','stop recording'] },
+  { name:'clear',     kws:['clear','reset','erase'] },
+  { name:'kit:drum',  kws:['drums','drum kit','set kit drum', 'drum'] },
+  { name:'kit:funk', kws:['synth','synth kit','set kit synth','funk kit','funk drum','funk'] },
+  { name:'kit:piano', kws:['piano','keys','set kit piano'] },
+  { name:'export',    kws:['export','download image','save image'] },
+];
+
+const counts = Object.fromEntries(intents.map(it => [it.name, {hit:0, miss:0}]));
+
+function renderCounts(){
+  const tbody = document.getElementById('counts');
+  tbody.innerHTML = intents.map(it => `
+    <tr>
+      <td>${it.name}</td>
+      <td>${counts[it.name].hit}</td>
+      <td>${counts[it.name].miss}</td>
+      <td>${it.kws.join(', ')}</td>
+    </tr>`).join('');
+}
+renderCounts();
+
+function speak(msg){
+  const u = new SpeechSynthesisUtterance(msg);
+  u.rate = 1.0; u.pitch = 1.0;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+
+function matchIntent(text){
+  const t = text.toLowerCase().trim();
+  for (const it of intents) {
+    if (it.kws.some(k => t.includes(k))) return it.name;
+  }
+  return null;
+}
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, lastCommandAt = 0;
+const debounceMs = 900; // prevent rapid double triggers
+
+function startRec(){
+  if (!SR) { alert('Web Speech API not supported in this browser. Use Chrome.'); return; }
+  if (rec) return;
+  rec = new SR();
+  rec.lang = 'en-US';
+  rec.continuous = true;
+  rec.interimResults = false;
+  rec.onstart = () => setStatus('Listening');
+  rec.onend = () => { setStatus('Idle'); /* auto-restart optional */ };
+  rec.onresult = (e) => {
+    const res = e.results[e.results.length-1];
+    if (!res.isFinal) return;
+    const text = res[0].transcript;
+    document.getElementById('transcript').textContent = text;
+    appendLog(`🎙️ ${text}`);
+
+    const now = performance.now();
+    if (now - lastCommandAt < debounceMs) return; // debounce
+
+    const intent = matchIntent(text);
+    const pill = document.getElementById('intent');
+    if (intent) {
+      lastCommandAt = now;
+      pill.textContent = intent; pill.classList.add('ok'); pill.classList.remove('bad');
+      counts[intent].hit++;
+      renderCounts();
+      // Short confirmation (same you’ll use in the app)
+      const spoken = intent.startsWith('kit:') ? 'kit ' + intent.split(':')[1] : intent;
+      speak(spoken);
+    } else {
+      pill.textContent = 'no match'; pill.classList.add('bad'); pill.classList.remove('ok');
+      // Attribute a miss to the most likely target (manual decision). For harness simplicity, increment a generic bucket
+      // or leave as-is and just review the log.
+    }
+  };
+  rec.start();
+}
+
+function stopRec(){ if (rec){ rec.stop(); rec = null; setStatus('Idle'); } }
+
+function setStatus(s){ const el = document.getElementById('status'); el.textContent = s; }
+
+function appendLog(line){
+  const ta = document.getElementById('log');
+  ta.value += line + '\n';
+  ta.scrollTop = ta.scrollHeight;
+}
+
+document.getElementById('startBtn').onclick = startRec;
+document.getElementById('stopBtn').onclick  = stopRec;
+</script>
+</body>
+</html>
